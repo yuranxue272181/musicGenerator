@@ -15,6 +15,6 @@
 1. 确保有midi样本在clean_midi文件中
 2. 使用midi_utils.py重构clean_midi文件中的样本保证格式正确，会保存在fixed_midi中
 3. 使用python train_gan_music.py训练模型，模型会保存至fixed_midi/models/
-4. 运行脚本生成音乐python generate_music.py，音乐会保存为generated_rhythm_music.mid
+4. 运行脚本生成音乐python generate_music_pro.py，音乐会保存为generated_rhythm_music.mid （也可以使用generate_music.py，或者generate_music_music.py）
 
  
