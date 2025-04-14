@@ -1,6 +1,6 @@
 # musicGenerator
 
-#py
+## Python
 1. generate_music.py         <br>使用已经训练好的generator来生成midi
 2. generate_music_music.py  <br>使用已经训练好的generator来生成只含piano的midi
 3. midi_utils.py            <br>使用music21将database中的midi筛选并且fix
@@ -10,3 +10,11 @@
 7. utils.py                  <br>节奏检测与奖励
 8. train_gan_music.py        <br>训练主脚本（整合 LSGAN + 节奏奖励）
 9. generate_music_pro.py        <br>第二版生成 .mid 文件带音色的完整脚本
+
+## 使用方法
+1. 确保有midi样本在clean_midi文件中
+2. 使用midi_utils.py重构clean_midi文件中的样本保证格式正确，会保存在fixed_midi中
+3. 使用python train_gan_music.py训练模型，模型会保存至fixed_midi/models/
+4. 运行脚本生成音乐python generate_music.py，音乐会保存为generated_rhythm_music.mid
+
+ 
