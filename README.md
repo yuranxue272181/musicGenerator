@@ -1,5 +1,7 @@
 # musicGenerator
 
+训练方式：GAN神经对抗网络
+
 ## Python
 1. generate_music.py         <br>使用已经训练好的generator来生成midi
 2. generate_music_music.py  <br>使用已经训练好的generator来生成只含piano的midi
