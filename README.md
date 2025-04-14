@@ -9,4 +9,4 @@
 6. model.py                  <br>第三版GAN
 7. utils.py                  <br>节奏检测与奖励
 8. train_gan_music.py        <br>训练主脚本（整合 LSGAN + 节奏奖励）
-9. generate_music_pro        <br>第二版生成 .mid 文件带音色的完整脚本
+9. generate_music_pro.py        <br>第二版生成 .mid 文件带音色的完整脚本
