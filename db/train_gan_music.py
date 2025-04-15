@@ -77,6 +77,7 @@ class MidiDatasetMulti(Dataset):
             self.data = np.array(self.data)
         else:
             print("❌ 没有有效 MIDI 数据")
+        print(f"✅ 成功加载 {len(self.data)} 条 MIDI 数据")
 
     def __len__(self):
         return len(self.data)
@@ -134,9 +135,15 @@ def train_gan_music(midi_dir, epochs=50, batch_size=16, latent_dim=100, fs=100, 
             g_loss = criterion(g_pred, valid)
 
             # 节奏奖励机制
+            total_rhythm_reward = 0.0
             for b in range(gen_data.size(0)):
                 pr = gen_data[b].detach().cpu().numpy()
-                g_loss -= reward_from_rhythm(pr)  # 如果节奏性好，loss 减小，相当于奖励 G
+                try:
+                    rhythm_reward = reward_from_rhythm(pr)
+                    total_rhythm_reward += rhythm_reward
+                    g_loss -= rhythm_reward  # 如果节奏性好，loss 减小，相当于奖励 G
+                except Exception as e:
+                    print(f"节奏奖励失败: {e}")
 
             g_loss.backward()
             optimizer_G.step()
