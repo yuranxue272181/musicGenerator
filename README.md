@@ -13,7 +13,7 @@ Stabilizes training, avoids vanishing gradients
 Generator Architecture：Convolutional + Upsampling
 Captures spatial & temporal structure of piano roll
 <br> 输出只有drum的声音，问题是reward鼓励的节奏感，只有drum的声音可以骗过discriminate
-7. gan_version4   <br>第四版，优化了
+7. gan_version4   <br>第四版，优化了rhythm,添加了density奖励，将generator生成的音乐时长从5s提高到10s
 8. utils.py                  <br>节奏检测与奖励
 9. train_gan_music.py        <br>训练主脚本（整合 LSGAN + 节奏奖励）
 10. generate_music_pro.py        <br>第二版生成 .mid 文件带音色的完整脚本
