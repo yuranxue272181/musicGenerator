@@ -109,7 +109,9 @@ def train_gan_music(midi_dir, epochs=50, batch_size=16, latent_dim=100, fs=100, 
     for epoch in range(epochs):
         for i, real_data in enumerate(dataloader):
             real_data = real_data.to(device)
-            valid = torch.ones(real_data.size(0), 1).to(device)
+
+            # 使用 Label Smoothing：真实数据标签是 0.9 而不是 1.0
+            valid = torch.ones(real_data.size(0), 1).to(device) * 0.9
             fake = torch.zeros(real_data.size(0), 1).to(device)
 
             # ---------------------
@@ -120,36 +122,44 @@ def train_gan_music(midi_dir, epochs=50, batch_size=16, latent_dim=100, fs=100, 
 
             z = torch.randn(real_data.size(0), latent_dim).to(device)
             gen_data = generator(z)
-            fake_loss = criterion(discriminator(gen_data.detach()), fake)
+
+            # 可选：为 G 生成的数据加入微小扰动，让 D 更难以识别
+            gen_data_noisy = gen_data + torch.randn_like(gen_data) * 0.01
+
+            fake_loss = criterion(discriminator(gen_data_noisy.detach()), fake)
 
             d_loss = (real_loss + fake_loss) / 2
             d_loss.backward()
             optimizer_D.step()
 
             # ---------------------
-            #  训练 Generator（加 rhythm 奖励）
+            #  训练 Generator（每个 batch 训练两次）
             # ---------------------
-            optimizer_G.zero_grad()
-            gen_data = generator(z)
-            g_pred = discriminator(gen_data)
-            g_loss = criterion(g_pred, valid)
-
-            # 节奏奖励机制
             total_rhythm_reward = 0.0
-            for b in range(gen_data.size(0)):
-                pr = gen_data[b].detach().cpu().numpy()
-                try:
-                    rhythm_reward = reward_from_rhythm(pr)
-                    total_rhythm_reward += rhythm_reward
-                    g_loss -= rhythm_reward  # 如果节奏性好，loss 减小，相当于奖励 G
-                except Exception as e:
-                    print(f"节奏奖励失败: {e}")
+            for _ in range(2):  # G 训练两次
+                optimizer_G.zero_grad()
+                z = torch.randn(real_data.size(0), latent_dim).to(device)
+                gen_data = generator(z)
 
-            g_loss.backward()
-            optimizer_G.step()
+                g_pred = discriminator(gen_data)
+                g_loss = criterion(g_pred, valid)
+
+                # 节奏奖励机制（加权）
+                for b in range(gen_data.size(0)):
+                    pr = gen_data[b].detach().cpu().numpy()
+                    try:
+                        rhythm_reward = reward_from_rhythm(pr)
+                        total_rhythm_reward += rhythm_reward
+                        g_loss -= 0.1 * rhythm_reward  # 使用加权的 reward 融合
+                    except Exception as e:
+                        print(f"节奏奖励失败: {e}")
+
+                g_loss.backward()
+                optimizer_G.step()
 
             if i % 10 == 0:
-                print(f"[Epoch {epoch+1}/{epochs}] [Batch {i}/{len(dataloader)}] D_loss: {d_loss.item():.4f}  G_loss: {g_loss.item():.4f}")
+                print(
+                    f"[Epoch {epoch + 1}/{epochs}] [Batch {i}/{len(dataloader)}] D_loss: {d_loss.item():.4f}  G_loss: {g_loss.item():.4f}  Reward: {total_rhythm_reward:.4f}")
 
     # 保存模型
     models_dir = os.path.join(midi_dir, "models")
