@@ -1,17 +1,15 @@
+# ✅ utils.py 中加入新的奖励机制
 import numpy as np
 
 def detect_beat(piano_roll, fs=100, window=16):
     try:
-        drum_track = piano_roll[-1]  # 最后一轨是 drum
+        drum_track = piano_roll[-1]  # 最后一轨默认是 Drum
         activation = drum_track.sum(axis=0)
         time_len = len(activation)
-
-        # 自动补齐为 window 的倍数
         remainder = time_len % window
         if remainder != 0:
             pad_len = window - remainder
             activation = np.pad(activation, (0, pad_len), mode='constant')
-
         grouped = activation.reshape(-1, window).sum(axis=1)
         variance = np.var(grouped)
         return variance
@@ -19,15 +17,25 @@ def detect_beat(piano_roll, fs=100, window=16):
         print(f"❌ detect_beat 错误: {e}")
         return 0.0
 
-
 def reward_from_rhythm(piano_roll):
-    """
-    更严格的节奏性检测：variance > 20 才给奖励
-    奖励值不再是固定的，而是根据节奏强度线性增长（最多 0.5）
-    """
     beat_strength = detect_beat(piano_roll)
-    if beat_strength > 50.0:
-        # 奖励为 [0.0, 0.5] 之间，随节奏强度线性增长
-        reward = min(0.5, (beat_strength - 50.0) / 50.0)
-        return reward
+    if beat_strength < 80:
+        return 0.0
+    elif beat_strength >= 150:
+        return 0.5
+    else:
+        return (beat_strength - 80.0) / 70.0 * 0.5
+
+def reward_from_density(piano_roll):
+    active_notes = (piano_roll > 0.1).sum()
+    total_notes = piano_roll.size
+    density = active_notes / total_notes
+    if 0.0005 < density < 0.2:  # 避免太稀或太密
+        return 0.3
     return 0.0
+
+def analyze_music(piano_roll):
+    rhythm = reward_from_rhythm(piano_roll)
+    density = reward_from_density(piano_roll)
+    print(f"🎼 Rhythm Score: {rhythm:.2f} ({'✅' if rhythm > 0 else '⚠️'})",
+          f"| Density Score: {density:.2f} ({'✅' if density > 0 else '⚠️'})")
