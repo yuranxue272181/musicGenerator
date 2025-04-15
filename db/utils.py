@@ -26,16 +26,42 @@ def reward_from_rhythm(piano_roll):
     else:
         return (beat_strength - 80.0) / 70.0 * 0.5
 
-def reward_from_density(piano_roll):
-    active_notes = (piano_roll > 0.1).sum()
-    total_notes = piano_roll.size
-    density = active_notes / total_notes
-    if 0.0005 < density < 0.2:  # 避免太稀或太密
-        return 0.3
-    return 0.0
+def reward_from_density(piano_roll, target_density=0.15):
+    # piano_roll: (tracks, 128, T)
+    actual_density = np.mean(piano_roll > 0)
+    return 1.0 - abs(actual_density - target_density)
+
+
 
 def analyze_music(piano_roll):
-    rhythm = reward_from_rhythm(piano_roll)
-    density = reward_from_density(piano_roll)
-    print(f"🎼 Rhythm Score: {rhythm:.2f} ({'✅' if rhythm > 0 else '⚠️'})",
-          f"| Density Score: {density:.2f} ({'✅' if density > 0 else '⚠️'})")
+    instrument_names = ["Flute", "Violin", "Bass", "Drums"]
+    threshold = 0.1  # 跟 midi 生成中的阈值一致
+
+    for idx, channel in enumerate(piano_roll):
+        active_notes = (channel > threshold).sum()
+        status = "✅ Has notes" if active_notes > 0 else "❌ Silent"
+        print(f"Channel {idx} ({instrument_names[idx]}): {status} (Active notes: {active_notes})")
+
+# utils.py
+
+def reward_from_pitch_range(piano_roll):
+    # piano_roll: (tracks, 128, T)
+    pitch_range = 0
+    for track in piano_roll:
+        pitches = np.where(track > 0)
+        if pitches[0].size > 0:
+            pitch_range += pitches[0].max() - pitches[0].min()
+    return pitch_range / (len(piano_roll) * 128)  # normalize to 0~1
+
+
+def reward_from_silence(piano_roll):
+    # 统计时间上全为0的比例
+    silence_frames = 0
+    total_frames = piano_roll.shape[2]
+    for t in range(total_frames):
+        if np.sum(piano_roll[:, :, t]) == 0:
+            silence_frames += 1
+    return silence_frames / total_frames  # 比例越大越好
+
+
+
