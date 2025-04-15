@@ -58,4 +58,6 @@ class Discriminator(nn.Module):
         )
 
     def forward(self, x):
-        return self.model(x)
+        out = self.model(x)
+        #print(out.shape)  # 开发阶段可启用
+        return out

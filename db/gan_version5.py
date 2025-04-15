@@ -1,18 +1,16 @@
 # train_gan_music.py
 
 import os
+
+import numpy as np
+import pretty_midi
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
-import numpy as np
 
 from model import Generator, Discriminator
-from utils import reward_from_rhythm
-from pretty_midi import PrettyMIDI
-
-import pretty_midi
-import glob
+from utils import reward_from_rhythm, reward_from_pitch_range, reward_from_silence, reward_from_density
 
 
 # -----------------------------
@@ -27,7 +25,7 @@ def find_all_midi_files(root_dir):
     return midi_files
 
 
-def midi_to_multi_piano_roll(midi_file, fs=100, max_tracks=4, fixed_length=500):
+def midi_to_multi_piano_roll(midi_file, fs=100, max_tracks=4, fixed_length=1000):
     try:
         midi_data = pretty_midi.PrettyMIDI(midi_file)
         tracks = []
@@ -58,7 +56,7 @@ def midi_to_multi_piano_roll(midi_file, fs=100, max_tracks=4, fixed_length=500):
 
 
 class MidiDatasetMulti(Dataset):
-    def __init__(self, midi_dir, fs=100, fixed_length=500, max_tracks=4):
+    def __init__(self, midi_dir, fs=100, fixed_length=1000, max_tracks=4):
         self.midi_files = find_all_midi_files(midi_dir)
         self.fs = fs
         self.fixed_length = fixed_length
@@ -89,7 +87,7 @@ class MidiDatasetMulti(Dataset):
 # -----------------------------
 # 主训练函数
 # -----------------------------
-def train_gan_music(midi_dir, epochs=50, batch_size=16, latent_dim=100, fs=100, fixed_length=500, max_tracks=4):
+def train_gan_music(midi_dir, epochs=50, batch_size=16, latent_dim=100, fs=100, fixed_length=1000, max_tracks=4):
     dataset = MidiDatasetMulti(midi_dir, fs=fs, fixed_length=fixed_length, max_tracks=max_tracks)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
     if len(dataset) == 0:
@@ -101,7 +99,6 @@ def train_gan_music(midi_dir, epochs=50, batch_size=16, latent_dim=100, fs=100, 
     generator = Generator(latent_dim, sample_shape[0], sample_shape[1], sample_shape[2]).to(device)
     discriminator = Discriminator(sample_shape).to(device)
 
-    # 使用 LSGAN 损失函数（MSE）
     criterion = nn.MSELoss()
     optimizer_G = optim.Adam(generator.parameters(), lr=0.0002, betas=(0.5, 0.999))
     optimizer_D = optim.Adam(discriminator.parameters(), lr=0.0002, betas=(0.5, 0.999))
@@ -110,24 +107,18 @@ def train_gan_music(midi_dir, epochs=50, batch_size=16, latent_dim=100, fs=100, 
         for i, real_data in enumerate(dataloader):
             real_data = real_data.to(device)
 
-            # 使用 Label Smoothing：真实数据标签是 0.9 而不是 1.0
             valid = torch.ones(real_data.size(0), 1).to(device) * 0.9
             fake = torch.zeros(real_data.size(0), 1).to(device)
 
-            # ---------------------
-            #  训练 Discriminator
-            # ---------------------
+            # 训练 D
             if i % 2 == 0:
                 optimizer_D.zero_grad()
-
-                # real
                 real_output = discriminator(real_data)
                 real_loss = criterion(real_output, valid)
 
-                # fake
                 z = torch.randn(real_data.size(0), latent_dim).to(device)
                 gen_data = generator(z)
-                gen_data_noisy = gen_data + torch.randn_like(gen_data) * 0.01  # 加扰动
+                gen_data_noisy = gen_data + torch.randn_like(gen_data) * 0.01
                 fake_output = discriminator(gen_data_noisy.detach())
                 fake_loss = criterion(fake_output, fake)
 
@@ -135,42 +126,67 @@ def train_gan_music(midi_dir, epochs=50, batch_size=16, latent_dim=100, fs=100, 
                 d_loss.backward()
                 optimizer_D.step()
             else:
-                d_loss = torch.tensor(0.0)  # 记录方便打印
+                d_loss = torch.tensor(0.0)
 
-            # ---------------------
-            #  训练 Generator（每个 batch 训练两次）
-            # ---------------------
-            total_rhythm_reward = 0.0
-            for _ in range(2):  # G 每次训练两次
+            # 训练 G
+            for _ in range(2):  # G train twice
                 optimizer_G.zero_grad()
                 z = torch.randn(real_data.size(0), latent_dim).to(device)
-                gen_data = generator(z)
-                g_pred = discriminator(gen_data)
-                g_loss = criterion(g_pred, valid)
+                raw_output = generator(z)
+                probs = torch.sigmoid(raw_output + 0.2)
+                m = torch.distributions.Bernoulli(probs)
+                sampled = m.sample()
 
-                # 节奏奖励机制（严格版本 + 衰减系数）
-                reward_scale = max(0.05 * (1.0 - epoch / epochs), 0.01)  # epoch 越大，reward 越少
-                for b in range(gen_data.size(0)):
-                    pr = gen_data[b].detach().cpu().numpy()
-                    try:
-                        rhythm_reward = reward_from_rhythm(pr)
-                        total_rhythm_reward += rhythm_reward
-                        g_loss -= reward_scale * rhythm_reward
-                    except Exception as e:
-                        print(f"节奏奖励失败: {e}")
+                total_g_loss = 0.0
+                total_rhythm_reward = 0.0
+                total_density_score = 0.0
+                total_pitch_range = 0.0
+                total_silence = 0.0
 
-                g_loss.backward()
+                reward_scale = max(0.05 * (1.0 - epoch / epochs), 0.01)
+
+                for b in range(sampled.size(0)):
+                    sample_np = sampled[b].detach().cpu().numpy()
+
+                    rhythm = reward_from_rhythm(sample_np)
+                    pitch_range = reward_from_pitch_range(sample_np)
+                    silence = reward_from_silence(sample_np)
+                    density_score = reward_from_density(sample_np, target_density=0.15)
+
+                    # 保存奖励值统计
+                    total_rhythm_reward += rhythm
+                    total_pitch_range += pitch_range
+                    total_silence += silence
+                    total_density_score += density_score
+
+                    # 综合奖励
+                    total_reward = (
+                            0.2 * rhythm +
+                            0.4 * pitch_range +
+                            0.4 * silence +
+                            0.4 * density_score
+                    )
+
+                    log_prob = m.log_prob(sampled[b]).mean()
+                    g_loss = -log_prob * reward_scale * total_reward
+                    g_loss.backward(retain_graph=True)
+                    total_g_loss += g_loss.item()
+
                 optimizer_G.step()
 
-            if i % 10 == 0:
-                print(
-                    f"[Epoch {epoch + 1}/{epochs}] [Batch {i}/{len(dataloader)}] D_loss: {d_loss.item():.4f}  G_loss: {g_loss.item():.4f}  Reward: {total_rhythm_reward:.4f}")
+                if i % 10 == 0:
+                    actual_density = np.mean(sample_np > 0)
+                    actual_silence_ratio = reward_from_silence(sample_np)
+                    print(f"[Epoch {epoch + 1}/{epochs}] [Batch {i}/{len(dataloader)}] "
+                          f"D_loss: {d_loss.item():.4f}  G_loss: {total_g_loss:.4f}  "
+                          f"Reward(Rhythm/Pitch/Silence/Density): "
+                          f"{total_rhythm_reward:.2f} / {total_pitch_range:.2f} / "
+                          f"{actual_silence_ratio:.2f} / {actual_density:.2f}")
 
-    # 保存模型
     models_dir = os.path.join(midi_dir, "models")
     os.makedirs(models_dir, exist_ok=True)
-    torch.save(generator.state_dict(), os.path.join(models_dir, "generator_rhythm.pth"))
-    torch.save(discriminator.state_dict(), os.path.join(models_dir, "discriminator_rhythm.pth"))
+    torch.save(generator.state_dict(), os.path.join(models_dir, "generator_version5.pth"))
+    torch.save(discriminator.state_dict(), os.path.join(models_dir, "discriminator_version5.pth"))
     print("✅ 模型已保存！")
 
 

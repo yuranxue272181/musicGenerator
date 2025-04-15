@@ -64,7 +64,7 @@ def piano_roll_to_midi(piano_roll, fs=100):
 
 
 # ==== 主函数 ====
-def generate_and_save_music(model_path, latent_dim=100, output_shape=(4, 128, 500), fs=100, save_path="generated_music.mid"):
+def generate_and_save_music(model_path, latent_dim=100, output_shape=(4, 128, 1000), fs=100, save_path="generated_music.mid"):
     generator = Generator(latent_dim, output_shape)
     generator.load_state_dict(torch.load(model_path, map_location="cpu"))
     generator.eval()
@@ -80,5 +80,5 @@ def generate_and_save_music(model_path, latent_dim=100, output_shape=(4, 128, 50
 
 if __name__ == "__main__":
     base_dir = os.path.dirname(__file__)
-    model_path = os.path.join(base_dir, "fixed_midi", "models", "generator_musegan.pth")
+    model_path = os.path.join(base_dir, "fixed_midi", "models", "generator_version4.pth")
     generate_and_save_music(model_path)

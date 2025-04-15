@@ -8,7 +8,7 @@ from torch.utils.data import Dataset, DataLoader
 import numpy as np
 
 from model import Generator, Discriminator
-from utils import reward_from_rhythm
+from utils import reward_from_rhythm, reward_from_density
 from pretty_midi import PrettyMIDI
 
 import pretty_midi
@@ -27,7 +27,7 @@ def find_all_midi_files(root_dir):
     return midi_files
 
 
-def midi_to_multi_piano_roll(midi_file, fs=100, max_tracks=4, fixed_length=500):
+def midi_to_multi_piano_roll(midi_file, fs=100, max_tracks=4, fixed_length=1000):
     try:
         midi_data = pretty_midi.PrettyMIDI(midi_file)
         tracks = []
@@ -58,7 +58,7 @@ def midi_to_multi_piano_roll(midi_file, fs=100, max_tracks=4, fixed_length=500):
 
 
 class MidiDatasetMulti(Dataset):
-    def __init__(self, midi_dir, fs=100, fixed_length=500, max_tracks=4):
+    def __init__(self, midi_dir, fs=100, fixed_length=1000, max_tracks=4):
         self.midi_files = find_all_midi_files(midi_dir)
         self.fs = fs
         self.fixed_length = fixed_length
@@ -89,7 +89,7 @@ class MidiDatasetMulti(Dataset):
 # -----------------------------
 # 主训练函数
 # -----------------------------
-def train_gan_music(midi_dir, epochs=50, batch_size=16, latent_dim=100, fs=100, fixed_length=500, max_tracks=4):
+def train_gan_music(midi_dir, epochs=50, batch_size=16, latent_dim=100, fs=100, fixed_length=1000, max_tracks=4):
     dataset = MidiDatasetMulti(midi_dir, fs=fs, fixed_length=fixed_length, max_tracks=max_tracks)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
     if len(dataset) == 0:
@@ -140,37 +140,57 @@ def train_gan_music(midi_dir, epochs=50, batch_size=16, latent_dim=100, fs=100, 
             # ---------------------
             #  训练 Generator（每个 batch 训练两次）
             # ---------------------
-            total_rhythm_reward = 0.0
-            for _ in range(2):  # G 每次训练两次
+            # ✅ 使用 REINFORCE 风格 reward 引导 G 训练
+            # 替换原来的 Generator loss 部分
+
+            # ✅ 使用 REINFORCE 风格 reward 引导 G 训练
+            # 替换原来的 Generator loss 部分
+
+            for _ in range(2):  # G 每个 batch 训练两次
+                # ✅ 使用 REINFORCE 风格 reward 引导 G 训练（加入 soft density reward + 激活 bias）
+                # 替换原来的 Generator loss 部分
+
                 optimizer_G.zero_grad()
                 z = torch.randn(real_data.size(0), latent_dim).to(device)
-                gen_data = generator(z)
-                g_pred = discriminator(gen_data)
-                g_loss = criterion(g_pred, valid)
+                raw_output = generator(z)
 
-                # 节奏奖励机制（严格版本 + 衰减系数）
-                reward_scale = max(0.05 * (1.0 - epoch / epochs), 0.01)  # epoch 越大，reward 越少
-                for b in range(gen_data.size(0)):
-                    pr = gen_data[b].detach().cpu().numpy()
-                    try:
-                        rhythm_reward = reward_from_rhythm(pr)
-                        total_rhythm_reward += rhythm_reward
-                        g_loss -= reward_scale * rhythm_reward
-                    except Exception as e:
-                        print(f"节奏奖励失败: {e}")
+                # 加 bias，提升激活概率，便于采样出非零 note
+                probs = torch.sigmoid(raw_output + 0.2)
+                m = torch.distributions.Bernoulli(probs)
+                sampled = m.sample()
 
-                g_loss.backward()
+                total_g_loss = 0.0
+                total_rhythm_reward = 0.0
+                total_density_score = 0.0
+                reward_scale = max(0.05 * (1.0 - epoch / epochs), 0.01)
+
+                for b in range(sampled.size(0)):
+                    # rhythm reward: 仍然基于 sample 的 numpy 判断
+                    rhythm = reward_from_rhythm(sampled[b].detach().cpu().numpy())
+                    total_rhythm_reward += rhythm
+
+                    # density score: 使用概率的平均值（soft reward, 可微）
+                    density_score = probs[b].mean()
+                    total_density_score += density_score.item()
+
+                    total_reward = 0.2 * rhythm + 1.0 * density_score  # rhythm 是 0~0.5，density 是 0~1
+                    log_prob = m.log_prob(sampled[b]).mean()
+                    g_loss = -log_prob * reward_scale * total_reward
+                    g_loss.backward(retain_graph=True)
+                    total_g_loss += g_loss.item()
+
                 optimizer_G.step()
 
-            if i % 10 == 0:
-                print(
-                    f"[Epoch {epoch + 1}/{epochs}] [Batch {i}/{len(dataloader)}] D_loss: {d_loss.item():.4f}  G_loss: {g_loss.item():.4f}  Reward: {total_rhythm_reward:.4f}")
+                if i % 10 == 0:
+                    print(f"[Epoch {epoch + 1}/{epochs}] [Batch {i}/{len(dataloader)}] "
+                          f"D_loss: {d_loss.item():.4f}  G_loss: {total_g_loss:.4f}  "
+                          f"Reward(Rhythm/SoftDensity): {total_rhythm_reward:.2f} / {total_density_score:.2f}")
 
     # 保存模型
     models_dir = os.path.join(midi_dir, "models")
     os.makedirs(models_dir, exist_ok=True)
-    torch.save(generator.state_dict(), os.path.join(models_dir, "generator_rhythm.pth"))
-    torch.save(discriminator.state_dict(), os.path.join(models_dir, "discriminator_rhythm.pth"))
+    torch.save(generator.state_dict(), os.path.join(models_dir, "generator_version4.pth"))
+    torch.save(discriminator.state_dict(), os.path.join(models_dir, "discriminator_version4.pth"))
     print("✅ 模型已保存！")
 
 
