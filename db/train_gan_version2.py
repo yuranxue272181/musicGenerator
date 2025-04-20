@@ -7,6 +7,27 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 import pretty_midi
 
+def save_pianoroll_as_midi(piano_roll, filename, fs=100):
+    midi = pretty_midi.PrettyMIDI()
+    for i, roll in enumerate(piano_roll):
+        instrument = pretty_midi.Instrument(program=0)
+        for pitch in range(128):
+            active = False
+            start = 0
+            for t in range(roll.shape[1]):
+                if roll[pitch, t] > 0 and not active:
+                    active = True
+                    start = t
+                elif roll[pitch, t] == 0 and active:
+                    end = t
+                    note = pretty_midi.Note(velocity=100, pitch=pitch, start=start/fs, end=end/fs)
+                    instrument.notes.append(note)
+                    active = False
+            if active:
+                note = pretty_midi.Note(velocity=100, pitch=pitch, start=start/fs, end=roll.shape[1]/fs)
+                instrument.notes.append(note)
+        midi.instruments.append(instrument)
+    midi.write(filename)
 
 # -----------------------------
 # 数据预处理部分（多轨 piano roll 表示）
@@ -206,6 +227,18 @@ def train_musegan(midi_dir, epochs=100, batch_size=16, latent_dim=100, fs=100, f
                 print(
                     f"[Epoch {epoch + 1}/{epochs}] [Batch {i}/{len(dataloader)}] D: {d_loss.item():.4f}  G: {g_loss.item():.4f}")
 
+        # <<< Add here
+        # if (epoch + 1) % 10 == 0:
+        with torch.no_grad():
+            z_sample = torch.randn(1, latent_dim)
+            gen_sample = generator(z_sample).squeeze(0).cpu().numpy()
+            binarized = (gen_sample > 0.3).astype(np.uint8)
+            output_dir = os.path.join(os.path.dirname(__file__), "generated_midis")
+            os.makedirs(output_dir, exist_ok=True)
+            save_path = os.path.join(output_dir, f"epoch{epoch + 1}.mid")
+            save_pianoroll_as_midi(binarized, save_path)
+            print(f"🎵 Saved generated MIDI at epoch {epoch + 1} -> {save_path}")
+
     models_dir = os.path.join(midi_dir, "models")
     os.makedirs(models_dir, exist_ok=True)
     torch.save(generator.state_dict(), os.path.join(models_dir, "generator_musegan.pth"))
@@ -222,4 +255,4 @@ if __name__ == "__main__":
     base_dir = os.path.dirname(__file__)
     midi_dir = os.path.join(base_dir,"fixed_midi")
     # 调用训练函数
-    train_musegan(midi_dir, epochs=20, batch_size=16, latent_dim=100, fs=100, fixed_length=500, max_tracks=4)
+    train_musegan(midi_dir, epochs=50, batch_size=16, latent_dim=100, fs=100, fixed_length=500, max_tracks=4)
