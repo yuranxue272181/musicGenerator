@@ -41,13 +41,16 @@ def piano_roll_to_midi(piano_roll, fs=100):
     for i, roll in enumerate(piano_roll):
         config = instrument_configs[i % len(instrument_configs)]
         instrument = pretty_midi.Instrument(program=config["program"], is_drum=config["is_drum"], name=config["name"])
-        roll = (roll > 0.5).astype(np.uint8)
+
+        # 添加 post-processing 来“剪掉密集 note”
+        roll[roll < 0.2] = 0
+        roll = (roll > 0.3).astype(np.uint8)
 
         for pitch in range(roll.shape[0]):
             velocity = 100
             note_on = None
             for t in range(roll.shape[1]):
-                if roll[pitch, t] and note_on is None:
+                if roll[pitch, t] > 0.1 and note_on is None:
                     note_on = t
                 elif not roll[pitch, t] and note_on is not None:
                     start = note_on / fs
@@ -64,7 +67,7 @@ def piano_roll_to_midi(piano_roll, fs=100):
 
 
 # ==== 主函数 ====
-def generate_and_save_music(model_path, latent_dim=100, output_shape=(4, 128, 1000), fs=100, save_path="generated_music.mid"):
+def generate_and_save_music(model_path, latent_dim=100, output_shape=(4, 128, 500), fs=100, save_path="generated_music.mid"):
     generator = Generator(latent_dim, output_shape)
     generator.load_state_dict(torch.load(model_path, map_location="cpu"))
     generator.eval()
@@ -80,5 +83,5 @@ def generate_and_save_music(model_path, latent_dim=100, output_shape=(4, 128, 10
 
 if __name__ == "__main__":
     base_dir = os.path.dirname(__file__)
-    model_path = os.path.join(base_dir, "fixed_midi", "models", "generator_version4.pth")
+    model_path = os.path.join(base_dir, "fixed_midi", "models", "generator_version2.pth")
     generate_and_save_music(model_path)
