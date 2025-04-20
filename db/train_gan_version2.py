@@ -170,7 +170,12 @@ class Discriminator(nn.Module):
 # -----------------------------
 # 训练函数
 # -----------------------------
-def train_musegan(midi_dir, epochs=100, batch_size=16, latent_dim=100, fs=100, fixed_length=500, max_tracks=4):
+def train_musegan(midi_dir, epochs=100, batch_size=16, latent_dim=100, fs=100, fixed_length=500, max_tracks=4
+     #调用已有model
+                  ,
+    resume=True,
+    generator_path="path/to/generator.pth",
+    discriminator_path="path/to/discriminator.pth"):
     dataset = MidiDatasetMulti(midi_dir, fs=fs, fixed_length=fixed_length, max_tracks=max_tracks)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
     if len(dataset) == 0:
@@ -182,6 +187,20 @@ def train_musegan(midi_dir, epochs=100, batch_size=16, latent_dim=100, fs=100, f
 
     generator = Generator(latent_dim, sample_shape)
     discriminator = Discriminator(sample_shape)
+
+    # 如果启用续训（resume），则加载已有模型参数
+    if resume:
+        if generator_path and os.path.exists(generator_path):
+            generator.load_state_dict(torch.load(generator_path))
+            print(f"✅ Loaded Generator from: {generator_path}")
+        else:
+            print("⚠️ Generator checkpoint not found at", generator_path)
+
+        if discriminator_path and os.path.exists(discriminator_path):
+            discriminator.load_state_dict(torch.load(discriminator_path))
+            print(f"✅ Loaded Discriminator from: {discriminator_path}")
+        else:
+            print("⚠️ Discriminator checkpoint not found at", discriminator_path)
 
     adversarial_loss = nn.BCELoss()
     optimizer_G = optim.Adam(generator.parameters(), lr=0.0002, betas=(0.5, 0.999))
@@ -241,8 +260,8 @@ def train_musegan(midi_dir, epochs=100, batch_size=16, latent_dim=100, fs=100, f
 
     models_dir = os.path.join(midi_dir, "models")
     os.makedirs(models_dir, exist_ok=True)
-    torch.save(generator.state_dict(), os.path.join(models_dir, "generator_musegan.pth"))
-    torch.save(discriminator.state_dict(), os.path.join(models_dir, "discriminator_musegan.pth"))
+    torch.save(generator.state_dict(), os.path.join(models_dir, "generator_version2_2.pth"))
+    torch.save(discriminator.state_dict(), os.path.join(models_dir, "discriminator_version2_2.pth"))
     print("模型训练完成，已保存。")
 
 
@@ -250,9 +269,33 @@ def train_musegan(midi_dir, epochs=100, batch_size=16, latent_dim=100, fs=100, f
 # -----------------------------
 # 主函数入口
 # -----------------------------
+# #创建新model
+# if __name__ == "__main__":
+#     # 假设 MIDI 数据存放在项目根目录下的 db 目录中
+#     base_dir = os.path.dirname(__file__)
+#     midi_dir = os.path.join(base_dir,"fixed_midi")
+#     # 调用训练函数
+#     #train_musegan(midi_dir, epochs=50, batch_size=16, latent_dim=100, fs=100, fixed_length=500, max_tracks=4)
+
+
+#调用已有model
 if __name__ == "__main__":
-    # 假设 MIDI 数据存放在项目根目录下的 db 目录中
     base_dir = os.path.dirname(__file__)
-    midi_dir = os.path.join(base_dir,"fixed_midi")
-    # 调用训练函数
-    train_musegan(midi_dir, epochs=50, batch_size=16, latent_dim=100, fs=100, fixed_length=500, max_tracks=4)
+    midi_dir = os.path.join(base_dir, "fixed_midi")
+    model_dir = os.path.join(midi_dir, "models")
+
+    generator_ckpt = os.path.join(model_dir, "generator_version2.pth")
+    discriminator_ckpt = os.path.join(model_dir, "discriminator_version2.pth")
+
+    train_musegan(
+        midi_dir=midi_dir,
+        epochs=20,  # 再训练 20 轮
+        batch_size=16,
+        latent_dim=100,
+        fs=100,
+        fixed_length=500,
+        max_tracks=4,
+        resume=True,  # ✅ 这里必须显式设置
+        generator_path=generator_ckpt,
+        discriminator_path=discriminator_ckpt
+    )

@@ -56,7 +56,7 @@ def piano_roll_to_midi(piano_roll, fs=100):
     return midi
 
 
-def generate_music(model_path, latent_dim=100, output_shape=(4, 128, 500), save_path="generated_rhythm_music.mid"):
+def generate_music(model_path, latent_dim=100, output_shape=(4, 128, 500), save_path="generated_version2.mid"):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # 载入模型
@@ -85,5 +85,5 @@ def generate_music(model_path, latent_dim=100, output_shape=(4, 128, 500), save_
 
 if __name__ == "__main__":
     base_dir = os.path.dirname(__file__)
-    model_path = os.path.join(base_dir, "fixed_midi", "models", "generator_rhythm.pth")
+    model_path = os.path.join(base_dir, "fixed_midi", "models", "generator_version2.pth")
     generate_music(model_path)
