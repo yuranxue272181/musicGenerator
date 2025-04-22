@@ -56,19 +56,66 @@ def piano_roll_to_midi(piano_roll, fs=100):
 
 
     # 乐器配置（program + 是否是打击乐）
-    instrument_configs = [
-        {"program": 8, "is_drum": False, "name": "Celesta"},  # ✨ 闪烁高音
-        {"program": 95, "is_drum": False, "name": "Pad Sweep"},  # 🌫️ 空间氛围
-        {"program": 50, "is_drum": False, "name": "Slow Strings"},  # 🎻 慢弦和声
-        {"program": 9, "is_drum": True, "name": "Brush Drums"}  # 🥁 柔鼓刷击
-    ]
+    #21
+    # instrument_configs = [
+    #     {"program": 82, "is_drum": False, "name": "Calliope Lead"},  # 主旋律哨音
+    #     {"program": 81, "is_drum": False, "name": "Saw Lead"},  # 和声滑音
+    #     {"program": 34, "is_drum": False, "name": "Picked Bass"},  # 清晰低音
+    #     {"program": 9, "is_drum": True, "name": "Standard Drums"}  # 标准鼓组
+    # ]
+    #
+    # rhythm_patterns = [
+    #     list(range(0, 500, 12)),  # Lead: 频密打点
+    #     list(range(4, 500, 16)),  # Saw: 反拍或轻节奏
+    #     list(range(0, 500, 32)),  # Bass: 拍内节奏线
+    #     [0, 8, 16, 24, 32, 40]  # Drums: 稳定节奏骨架
+    # ]
 
-    rhythm_patterns = [
-        list(range(0, 500, 24)),  # Celesta 星星点点
-        list(range(12, 500, 64)),  # Pad 低频起伏
-        list(range(6, 500, 48)),  # Strings 旋律延展
-        [0, 12, 24, 36]  # Drum 轻节奏铺垫
-    ]
+    #20
+    # instrument_configs = [
+    #     {"program": 85, "is_drum": False, "name": "Vox Lead"},  # 合成器人声旋律
+    #     {"program": 91, "is_drum": False, "name": "Pad Bowed"},  # 弓弦氛围感
+    #     {"program": 38, "is_drum": False, "name": "Synth Bass 1"},  # 轻低频
+    #     {"program": 9, "is_drum": True, "name": "Brush Drums"}  # 轻打节奏
+    # ]
+    #
+    # rhythm_patterns = [
+    #     list(range(0, 500, 24)),  # Vox Lead: 松节奏旋律
+    #     list(range(16, 500, 48)),  # Pad: 拉长背景
+    #     list(range(4, 500, 32)),  # Bass: 简洁低频
+    #     [0, 12, 24, 36, 60]  # Drums: 偏 soft 节奏点
+    # ]
+
+    #19
+    # instrument_configs = [
+    #     {"program": 80, "is_drum": False, "name": "Square Lead"},  # 方波旋律
+    #     {"program": 90, "is_drum": False, "name": "Polysynth Pad"},  # 合成铺底
+    #     {"program": 39, "is_drum": False, "name": "Synth Bass 2"},  # 粗颗粒低音
+    #     {"program": 9, "is_drum": True, "name": "Power Drums"}  # 动作感鼓组
+    # ]
+    #
+    # rhythm_patterns = [
+    #     list(range(0, 500, 16)),  # Lead: 主旋律均匀拍
+    #     list(range(8, 500, 32)),  # Pad: 偏慢拍落点
+    #     list(range(0, 500, 24)),  # Bass: 加入律动细分
+    #     [0, 8, 16, 24, 40, 48]  # Drums: 强节奏骨架
+    # ]
+
+
+    # 18
+    # instrument_configs = [
+    #     {"program": 8, "is_drum": False, "name": "Celesta"},  # ✨ 闪烁高音
+    #     {"program": 95, "is_drum": False, "name": "Pad Sweep"},  # 🌫️ 空间氛围
+    #     {"program": 50, "is_drum": False, "name": "Slow Strings"},  # 🎻 慢弦和声
+    #     {"program": 9, "is_drum": True, "name": "Brush Drums"}  # 🥁 柔鼓刷击
+    # ]
+    #
+    # rhythm_patterns = [
+    #     list(range(0, 500, 24)),  # Celesta 星星点点
+    #     list(range(12, 500, 64)),  # Pad 低频起伏
+    #     list(range(6, 500, 48)),  # Strings 旋律延展
+    #     [0, 12, 24, 36]  # Drum 轻节奏铺垫
+    # ]
 
     #17
     # instrument_configs = [
@@ -100,19 +147,19 @@ def piano_roll_to_midi(piano_roll, fs=100):
     #     [0, 8, 16, 24, 48, 56]  # Drum 基础节奏组合
     # ]
 
-#像素
-    # instrument_configs = [
-    #     {"program": 80, "is_drum": False, "name": "Square Lead"},  # 方波旋律
-    #     {"program": 81, "is_drum": False, "name": "Saw Lead"},  # 锯齿和声/点缀
-    #     {"program": 38, "is_drum": False, "name": "Synth Bass"},  # 三角波低音
-    #     {"program": 9, "is_drum": True, "name": "Noise Drums"}  # 噪声鼓组
-    # ]
-    # rhythm_patterns = [
-    #     list(range(0, time_steps, 16)),  # 🎹 Piano: 每拍落点
-    #     list(range(4, time_steps, 24)),  # 🎸 Guitar: off-beat
-    #     list(range(0, time_steps, 32)),  # 🎸 Bass: 稀疏根音
-    #     [0, 8, 16, 24, 32, 40]           # 🥁 Drum: kick/snare 组合
-    # ]
+#像素15
+    instrument_configs = [
+        {"program": 80, "is_drum": False, "name": "Square Lead"},  # 方波旋律
+        {"program": 81, "is_drum": False, "name": "Saw Lead"},  # 锯齿和声/点缀
+        {"program": 38, "is_drum": False, "name": "Synth Bass"},  # 三角波低音
+        {"program": 9, "is_drum": True, "name": "Noise Drums"}  # 噪声鼓组
+    ]
+    rhythm_patterns = [
+        list(range(0, time_steps, 16)),  # 🎹 Piano: 每拍落点
+        list(range(4, time_steps, 24)),  # 🎸 Guitar: off-beat
+        list(range(0, time_steps, 32)),  # 🎸 Bass: 稀疏根音
+        [0, 8, 16, 24, 32, 40]           # 🥁 Drum: kick/snare 组合
+    ]
 
     for i, roll in enumerate(piano_roll):
         cfg = instrument_configs[i % len(instrument_configs)]
