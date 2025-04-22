@@ -1,181 +1,374 @@
 import os
-import torch
+import glob
 import numpy as np
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
 import pretty_midi
-from torch import nn
 
-# ==== Generator 定义（保持不变）====
+def reward_from_chords(piano_roll, fs=100):
+    """
+    Evaluate if notes form chords in each time frame.
+    Score is based on how often 3+ notes occur simultaneously.
+    """
+    score = 0.0
+    time_steps = piano_roll.shape[-1]
+
+    for t in range(time_steps):
+        active_notes = np.sum(piano_roll[:, t] > 0)
+        if active_notes >= 3:
+            score += 1.0
+
+    return score / time_steps
+
+def save_pianoroll_as_midi(piano_roll, filename, fs=100):
+    midi = pretty_midi.PrettyMIDI()
+    for i, roll in enumerate(piano_roll):
+        instrument = pretty_midi.Instrument(program=0)
+        for pitch in range(128):
+            active = False
+            start = 0
+            for t in range(roll.shape[1]):
+                if roll[pitch, t] > 0 and not active:
+                    active = True
+                    start = t
+                elif roll[pitch, t] == 0 and active:
+                    end = t
+                    note = pretty_midi.Note(velocity=100, pitch=pitch, start=start/fs, end=end/fs)
+                    instrument.notes.append(note)
+                    active = False
+            if active:
+                note = pretty_midi.Note(velocity=100, pitch=pitch, start=start/fs, end=roll.shape[1]/fs)
+                instrument.notes.append(note)
+        midi.instruments.append(instrument)
+    midi.write(filename)
+
+# -----------------------------
+# 数据预处理部分（多轨 piano roll 表示）
+# -----------------------------
+
+def find_all_midi_files(root_dir):
+    """
+    递归遍历 root_dir 及其所有子目录，返回所有扩展名为 .mid 或 .midi 的文件路径列表。
+    """
+    midi_files = []
+    for dirpath, dirnames, filenames in os.walk(root_dir):
+        for filename in filenames:
+            if filename.lower().endswith(('.mid', '.midi')):
+                midi_files.append(os.path.join(dirpath, filename))
+    return midi_files
+
+# 设置 MIDI 数据目录为 db/clean_midi（包含子文件夹）
+base_dir = os.path.dirname(__file__)
+midi_dir = os.path.join(base_dir,"fixed_midi")
+print("MIDI 数据目录：", midi_dir)
+
+all_midi_files = find_all_midi_files(midi_dir)
+print("找到的 MIDI 文件数：", len(all_midi_files))
+for f in all_midi_files:
+    print(f)
+
+
+def midi_to_multi_piano_roll(midi_file, fs=100, max_tracks=4, fixed_length=500):
+    """
+    将 MIDI 文件转换为多轨 piano roll 表示，返回 shape (max_tracks, 128, fixed_length)
+    仅提取前 max_tracks 个轨道，若轨道不足则补零
+    """
+    try:
+        midi_data = pretty_midi.PrettyMIDI(midi_file)
+        tracks = []
+        for instrument in midi_data.instruments:
+            # 如果乐器为空（silent）或属于 percussion，可根据需要筛选，此处直接处理
+            roll = instrument.get_piano_roll(fs=fs)
+            roll = roll / 127.0
+            tracks.append(roll)
+            if len(tracks) >= max_tracks:
+                break
+        # 如果轨道不足，则补充全零矩阵
+        if len(tracks) < max_tracks:
+            max_time = max((r.shape[1] for r in tracks), default=0)
+            for _ in range(max_tracks - len(tracks)):
+                tracks.append(np.zeros((128, max_time)))
+        # 取所有轨道中最大的时间步数或固定长度
+        target_length = fixed_length
+        processed = []
+        for roll in tracks:
+            if roll.shape[1] < target_length:
+                pad_width = target_length - roll.shape[1]
+                roll = np.pad(roll, ((0, 0), (0, pad_width)), mode='constant')
+            else:
+                roll = roll[:, :target_length]
+            processed.append(roll)
+        multi_roll = np.stack(processed, axis=0)  # shape: (max_tracks, 128, target_length)
+        return multi_roll
+    except Exception as e:
+        print(f"Error processing {midi_file}: {e}")
+        return None
+
+
+class MidiDatasetMulti(Dataset):
+    def __init__(self, midi_dir, fs=100, fixed_length=500, max_tracks=4):
+        self.midi_files = find_all_midi_files(midi_dir)
+        self.fs = fs
+        self.fixed_length = fixed_length
+        self.max_tracks = max_tracks
+        self.data = []
+        self._prepare_dataset()
+
+    def _prepare_dataset(self):
+        for midi_file in self.midi_files:
+            multi_roll = midi_to_multi_piano_roll(midi_file, fs=self.fs,
+                                                  max_tracks=self.max_tracks,
+                                                  fixed_length=self.fixed_length)
+            if multi_roll is None:
+                continue
+            self.data.append(multi_roll)
+        if len(self.data) > 0:
+            self.data = np.array(self.data)
+        else:
+            print("未找到有效的 MIDI 数据！")
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        sample = self.data[idx]  # shape: (max_tracks, 128, fixed_length)
+        return torch.tensor(sample, dtype=torch.float32)
+
+
+# -----------------------------
+# GAN 模型（生成多轨 piano roll）
+# -----------------------------
 class Generator(nn.Module):
-    def __init__(self, latent_dim, output_shape):
+    def __init__(self, latent_dim=100, n_tracks=4, n_pitches=128, seq_len=500, n_layers=4, n_heads=8):
         super(Generator, self).__init__()
         self.latent_dim = latent_dim
-        self.output_shape = output_shape
-        self.fc = nn.Sequential(
-            nn.Linear(latent_dim, 1024),
-            nn.ReLU(),
-            nn.Linear(1024, np.prod(output_shape)),
-            nn.Tanh()
+        self.n_tracks = n_tracks
+        self.n_pitches = n_pitches
+        self.seq_len = seq_len
+        self.embed_dim = 512
+
+        # 将 latent 向量扩展成序列
+        self.latent_to_seq = nn.Linear(latent_dim, self.embed_dim * seq_len)
+
+        # 可学习的位置编码（更灵活）
+        self.pos_embedding = nn.Parameter(torch.randn(seq_len, self.embed_dim))
+
+        # Transformer Encoder
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=self.embed_dim,
+            nhead=n_heads,
+            dim_feedforward=1024,
+            dropout=0.1,
+            activation='relu',
+            batch_first=True
         )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+
+        # 输出映射到 piano roll（时间维度为最后一维）
+        self.output_layer = nn.Linear(self.embed_dim, n_tracks * n_pitches)
 
     def forward(self, z):
-        out = self.fc(z)
-        out = out.view(z.size(0), *self.output_shape)
-        return out
+        batch_size = z.size(0)
+        x = self.latent_to_seq(z).view(batch_size, self.seq_len, self.embed_dim)
+        x = x + self.pos_embedding.unsqueeze(0).to(x.device)  # 添加位置编码
+        x = self.transformer(x)
+        x = self.output_layer(x)  # [B, T, C×P]
+        x = x.view(batch_size, self.seq_len, self.n_tracks, self.n_pitches)
+        x = x.permute(0, 2, 3, 1)  # -> [B, n_tracks, n_pitches, T]
+        return x
 
 
-def sparsify_roll(roll, max_notes_per_frame=2, beat_step=4):
-    """
-    roll: shape (128, time)
-    限制每帧最多激活 max_notes_per_frame 个 note，
-    只保留 beat_step 间隔的时间帧（模拟节拍）
-    """
-    time_steps = roll.shape[1]
-    sparse = np.zeros_like(roll)
+class Discriminator(nn.Module):
+    def __init__(self, input_shape, d_model=512, nhead=8, num_layers=4):
+        super(Discriminator, self).__init__()
+        self.input_shape = input_shape  # (channels, pitches, time)
+        self.c, self.h, self.w = input_shape  # e.g., (4, 128, 500)
+        self.seq_len = self.w
+        self.feature_dim = self.c * self.h
 
-    for t in range(0, time_steps):
-        if t % beat_step != 0:
-            continue  # 只保留节奏点
+        # 输入嵌入层（把每个时间帧的 note 分布映射成 d_model）
+        self.input_proj = nn.Linear(self.feature_dim, d_model)
 
-        top_pitches = np.argsort(roll[:, t])[-max_notes_per_frame:]
-        sparse[top_pitches, t] = 1
+        # 可学习位置编码（或者用 sinusoidal encoding）
+        self.pos_embedding = nn.Parameter(torch.randn(self.seq_len, d_model))
 
-    return sparse.astype(np.uint8)
+        # Transformer 编码器
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=1024,
+            dropout=0.1,
+            batch_first=True
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
-# ==== Piano roll 转 MIDI ====
-def piano_roll_to_midi(piano_roll, fs=100):
-    """
-    幻神终极清音版：
-    - 限制 pitch 范围（避免尖叫）
-    - 调整 velocity（柔和输出）
-    - 使用节奏模板控制落点
-    - 鼓轨修复为标准 GM Percussion
-    """
-    import pretty_midi
-    midi = pretty_midi.PrettyMIDI()
-    time_steps = piano_roll.shape[2]
+        # 判别输出层：对序列取平均池化后判别
+        self.output_layer = nn.Sequential(
+            nn.Linear(d_model, 256),
+            nn.LeakyReLU(0.2),
+            nn.Dropout(0.3),
+            nn.Linear(256, 1),
+            nn.Sigmoid()
+        )
 
-
-    # 乐器配置（program + 是否是打击乐）
-    # instrument_configs = [
-    #     {"program": 8, "is_drum": False, "name": "Celesta"},  # ✨ 闪烁高音
-    #     {"program": 95, "is_drum": False, "name": "Pad Sweep"},  # 🌫️ 空间氛围
-    #     {"program": 50, "is_drum": False, "name": "Slow Strings"},  # 🎻 慢弦和声
-    #     {"program": 9, "is_drum": True, "name": "Brush Drums"}  # 🥁 柔鼓刷击
-    # ]
-    #
-    # rhythm_patterns = [
-    #     list(range(0, 500, 24)),  # Celesta 星星点点
-    #     list(range(12, 500, 64)),  # Pad 低频起伏
-    #     list(range(6, 500, 48)),  # Strings 旋律延展
-    #     [0, 12, 24, 36]  # Drum 轻节奏铺垫
-    # ]
-
-    #17
-    # instrument_configs = [
-    #     {"program": 46, "is_drum": False, "name": "Harp"},  # 🎼 点缀旋律
-    #     {"program": 54, "is_drum": False, "name": "Synth Voice"},  # 🧘 人声pad氛围
-    #     {"program": 35, "is_drum": False, "name": "Fretless Bass"},  # 🎸 滑音低频
-    #     {"program": 9, "is_drum": True, "name": "Standard Drums"}  # 🥁 标准鼓节奏
-    # ]
-    #
-    # rhythm_patterns = [
-    #     list(range(0, 500, 12)),  # Harp 每小节内轮指风
-    #     list(range(16, 500, 48)),  # Voice Pad：每段落落点
-    #     list(range(4, 500, 32)),  # Bass 偏稳的切分
-    #     [0, 8, 16, 24, 40]  # Drum 带律动基础鼓点
-    # ]
-
-    #16
-    # instrument_configs = [
-    #     {"program": 5, "is_drum": False, "name": "Electric Piano"},  # 🎹 轻快主旋律
-    #     {"program": 89, "is_drum": False, "name": "Warm Pad"},  # 🌫️ 背景铺底
-    #     {"program": 32, "is_drum": False, "name": "Acoustic Bass"},  # 🎸 柔和低音
-    #     {"program": 9, "is_drum": True, "name": "Room Drums"}  # 🥁 鼓，空间感
-    # ]
-    #
-    # rhythm_patterns = [
-    #     list(range(0, 500, 16)),  # Electric Piano 每拍落点
-    #     list(range(8, 500, 32)),  # Pad 稀疏落点
-    #     list(range(0, 500, 24)),  # Bass 三连节奏点
-    #     [0, 8, 16, 24, 48, 56]  # Drum 基础节奏组合
-    # ]
-
-#像素
-    instrument_configs = [
-        {"program": 80, "is_drum": False, "name": "Square Lead"},  # 方波旋律
-        {"program": 81, "is_drum": False, "name": "Saw Lead"},  # 锯齿和声/点缀
-        {"program": 38, "is_drum": False, "name": "Synth Bass"},  # 三角波低音
-        {"program": 9, "is_drum": True, "name": "Noise Drums"}  # 噪声鼓组
-    ]
-    rhythm_patterns = [
-        list(range(0, time_steps, 16)),  # 🎹 Piano: 每拍落点
-        list(range(4, time_steps, 24)),  # 🎸 Guitar: off-beat
-        list(range(0, time_steps, 32)),  # 🎸 Bass: 稀疏根音
-        [0, 8, 16, 24, 32, 40]           # 🥁 Drum: kick/snare 组合
-    ]
-
-    for i, roll in enumerate(piano_roll):
-        cfg = instrument_configs[i % len(instrument_configs)]
-        pattern = rhythm_patterns[i % len(rhythm_patterns)]
-
-        # 清理过高音符（尖锐声源）
-        roll = np.clip(roll, 0, 1)
-        roll[95:, :] = 0  # ✅ 限制 pitch 最大值（安全区域）
-
-        # 只保留节奏位置的最强 note
-        sparse = np.zeros_like(roll)
-        for t in pattern:
-            top = np.argsort(roll[:, t])[-1:]
-            sparse[top, t] = 1
-
-        inst = pretty_midi.Instrument(program=cfg["program"], is_drum=cfg["is_drum"], name=cfg["name"])
-
-        # 合成 note，统一使用较低力度
-        for pitch in range(128):
-            note_on = None
-            for t in range(time_steps):
-                if sparse[pitch, t] == 1 and note_on is None:
-                    note_on = t
-                elif sparse[pitch, t] == 0 and note_on is not None:
-                    inst.notes.append(pretty_midi.Note(
-                        velocity=80, pitch=pitch,  # ✅ 柔和音量
-                        start=note_on / fs,
-                        end=t / fs
-                    ))
-                    note_on = None
-            if note_on is not None:
-                inst.notes.append(pretty_midi.Note(
-                    velocity=80, pitch=pitch,
-                    start=note_on / fs, end=time_steps / fs
-                ))
-
-        midi.instruments.append(inst)
-
-    return midi
+    def forward(self, x):
+        # x: (B, C, H, W) -> (B, W, C×H)
+        x = x.view(x.size(0), self.c * self.h, self.w).transpose(1, 2)
+        x = self.input_proj(x)  # (B, W, d_model)
+        x = x + self.pos_embedding.unsqueeze(0).to(x.device)
+        x = self.transformer(x)  # (B, W, d_model)
+        x = x.mean(dim=1)  # 池化
+        validity = self.output_layer(x)  # (B, 1)
+        return validity
 
 
+# -----------------------------
+# 训练函数
+# -----------------------------
+def train_musegan(midi_dir, epochs=100, batch_size=16, latent_dim=100, fs=100, fixed_length=500, max_tracks=4
+     #调用已有model
+                  ,
+    resume=True,
+    generator_path="path/to/generator.pth",
+    discriminator_path="path/to/discriminator.pth"):
+    dataset = MidiDatasetMulti(midi_dir, fs=fs, fixed_length=fixed_length, max_tracks=max_tracks)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    if len(dataset) == 0:
+        print("数据集为空，请检查 MIDI 数据路径。")
+        return
+
+    sample_shape = dataset.data[0].shape
+    print("样本数据形状:", sample_shape)
+
+    generator = Generator(
+        latent_dim=latent_dim,
+        n_tracks=sample_shape[0],
+        n_pitches=sample_shape[1],
+        seq_len=sample_shape[2]
+    )
+    discriminator = Discriminator(sample_shape)
+
+    # 如果启用续训（resume），则加载已有模型参数
+    if resume:
+        if generator_path and os.path.exists(generator_path):
+            generator.load_state_dict(torch.load(generator_path))
+            print(f"✅ Loaded Generator from: {generator_path}")
+        else:
+            print("⚠️ Generator checkpoint not found at", generator_path)
+
+        if discriminator_path and os.path.exists(discriminator_path):
+            discriminator.load_state_dict(torch.load(discriminator_path))
+            print(f"✅ Loaded Discriminator from: {discriminator_path}")
+        else:
+            print("⚠️ Discriminator checkpoint not found at", discriminator_path)
+
+    adversarial_loss = nn.BCELoss()
+    optimizer_G = optim.Adam(generator.parameters(), lr=0.0002, betas=(0.5, 0.999))
+    optimizer_D = optim.Adam(discriminator.parameters(), lr=0.0002, betas=(0.5, 0.999))
+
+    for epoch in range(epochs):
+        for i, real_data in enumerate(dataloader):
+            current_bs = real_data.size(0)
+
+            # 使用 label smoothing
+            valid = torch.ones(current_bs, 1) * 0.9
+            fake = torch.zeros(current_bs, 1)
+
+            # ---------------------
+            #  训练判别器 Discriminator
+            # ---------------------
+            optimizer_D.zero_grad()
+            validity_real = discriminator(real_data)
+            d_loss_real = adversarial_loss(validity_real, valid)
+
+            z = torch.randn(current_bs, latent_dim)
+            gen_data = generator(z).detach() + 0.05 * torch.randn_like(generator(z))  # 生成器输出加噪声
+            validity_fake = discriminator(gen_data)
+            d_loss_fake = adversarial_loss(validity_fake, fake)
+
+            d_loss = (d_loss_real + d_loss_fake) / 2
+            d_loss.backward()
+            optimizer_D.step()
+
+            # ---------------------
+            #  多次训练 Generator
+            # ---------------------
+            for _ in range(2):
+                optimizer_G.zero_grad()
+                z = torch.randn(current_bs, latent_dim)
+                gen_data = generator(z)
+                validity_fake = discriminator(gen_data)
+
+                # Add chord reward
+                chord_score = 0.0
+                for b in range(gen_data.size(0)):
+                    roll = gen_data[b].detach().cpu().numpy()  # (4, 128, T)
+                    merged_roll = np.sum(roll, axis=0)  # (128, T)
+                    chord_score += reward_from_chords(merged_roll)
+
+                chord_score /= gen_data.size(0)  # Average score across batch
+
+                g_loss = adversarial_loss(validity_fake, valid)
+                g_loss -= 0.2 * chord_score  # Encourage chord formation
+                g_loss.backward()
+                optimizer_G.step()
+
+            if i % 10 == 0:
+                print(
+                    f"[Epoch {epoch + 1}/{epochs}] [Batch {i}/{len(dataloader)}] D: {d_loss.item():.4f}  G: {g_loss.item():.4f}")
+
+        # <<< Add here
+        # if (epoch + 1) % 10 == 0:
+        with torch.no_grad():
+            z_sample = torch.randn(1, latent_dim)
+            gen_sample = generator(z_sample).squeeze(0).cpu().numpy()
+            binarized = (gen_sample > 0.3).astype(np.uint8)
+            output_dir = os.path.join(os.path.dirname(__file__), "generated_midis")
+            os.makedirs(output_dir, exist_ok=True)
+            save_path = os.path.join(output_dir, f"epoch{epoch + 1}.mid")
+            save_pianoroll_as_midi(binarized, save_path)
+            print(f"🎵 Saved generated MIDI at epoch {epoch + 1} -> {save_path}")
+
+    models_dir = os.path.join(midi_dir, "models")
+    os.makedirs(models_dir, exist_ok=True)
+    torch.save(generator.state_dict(), os.path.join(models_dir, "generator_version2_2.pth"))
+    torch.save(discriminator.state_dict(), os.path.join(models_dir, "discriminator_version2_2.pth"))
+    print("模型训练完成，已保存。")
 
 
 
-
-
-
-# ==== 主函数 ====
-def generate_and_save_music(model_path, latent_dim=100, output_shape=(4, 128, 500), fs=100, save_path="generated_music.mid"):
-    generator = Generator(latent_dim, output_shape)
-    generator.load_state_dict(torch.load(model_path, map_location="cpu"))
-    generator.eval()
-
-    z = torch.randn(1, latent_dim)
-    with torch.no_grad():
-        piano_roll = generator(z)[0].numpy()
-
-    midi = piano_roll_to_midi(piano_roll, fs=fs)
-    midi.write(save_path)
-    print(f"🎵 已生成多音色 MIDI 文件：{save_path}")
-
-
+# -----------------------------
+# 主函数入口
+# -----------------------------
+# #创建新model
 if __name__ == "__main__":
+    # 假设 MIDI 数据存放在项目根目录下的 db 目录中
     base_dir = os.path.dirname(__file__)
-    model_path = os.path.join(base_dir, "fixed_midi", "models", "generator_version2.pth")
-    generate_and_save_music(model_path)
+    midi_dir = os.path.join(base_dir,"fixed_midi")
+    # 调用训练函数
+    train_musegan(midi_dir, epochs=50, batch_size=16, latent_dim=100, fs=100, fixed_length=500, max_tracks=4)
+
+
+#调用已有model
+# if __name__ == "__main__":
+#     base_dir = os.path.dirname(__file__)
+#     midi_dir = os.path.join(base_dir, "fixed_midi")
+#     model_dir = os.path.join(midi_dir, "models")
+#
+#     generator_ckpt = os.path.join(model_dir, "generator_version2.pth")
+#     discriminator_ckpt = os.path.join(model_dir, "discriminator_version2.pth")
+#
+#     train_musegan(
+#         midi_dir=midi_dir,
+#         epochs=20,  # 再训练 20 轮
+#         batch_size=16,
+#         latent_dim=100,
+#         fs=100,
+#         fixed_length=500,
+#         max_tracks=4,
+#         resume=True,  # ✅ 这里必须显式设置
+#         generator_path=generator_ckpt,
+#         discriminator_path=discriminator_ckpt
+#     )
