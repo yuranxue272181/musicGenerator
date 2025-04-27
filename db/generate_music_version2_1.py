@@ -6,6 +6,33 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 import pretty_midi
+from tqdm import tqdm  # ✅ 别忘了最前面加这个！
+import mido
+
+
+def is_midi_valid(midi_file, max_tick_threshold=16000000, max_messages=500000):
+    """
+    更宽松的midi有效性检查：
+    - tick允许非常大
+    - 消息数也放宽
+    - 只拦截真正极端坏文件
+    """
+    try:
+        mid = mido.MidiFile(midi_file)
+        total_messages = sum(len(track) for track in mid.tracks)
+        if total_messages > max_messages:
+            print(f"⚠️ 消息数超限 ({total_messages})，跳过 {midi_file}")
+            return False
+        for track in mid.tracks:
+            for msg in track:
+                if hasattr(msg, 'time') and msg.time > max_tick_threshold:
+                    print(f"⚠️ 单条tick时间异常 ({msg.time})，跳过 {midi_file}")
+                    return False
+        return True
+    except Exception as e:
+        print(f"⚠️ mido解析失败，跳过: {midi_file}，错误信息: {e}")
+        return False
+
 
 # def reward_from_chords(piano_roll, fs=100):
 #     """
@@ -130,16 +157,28 @@ class MidiDatasetMulti(Dataset):
 
     def _prepare_dataset(self):
         for midi_file in self.midi_files:
-            multi_roll = midi_to_multi_piano_roll(midi_file, fs=self.fs,
-                                                  max_tracks=self.max_tracks,
-                                                  fixed_length=self.fixed_length)
-            if multi_roll is None:
-                continue
-            self.data.append(multi_roll)
+            try:
+                if not is_midi_valid(midi_file):
+                    print(f"⚠️ tick检查失败，跳过: {midi_file}")
+                    continue  # 不合格，直接跳过，不浪费时间
+
+                multi_roll = midi_to_multi_piano_roll(
+                    midi_file,
+                    fs=self.fs,
+                    max_tracks=self.max_tracks,
+                    fixed_length=self.fixed_length
+                )
+                if multi_roll is not None:
+                    self.data.append(multi_roll)
+                else:
+                    print(f"⚠️ 解析失败（None），跳过: {midi_file}")
+            except Exception as e:
+                print(f"⚠️ 读取错误，跳过文件: {midi_file}。错误信息: {e}")
+                continue  # ✅ 出现异常，直接跳过这个文件
         if len(self.data) > 0:
             self.data = np.array(self.data)
         else:
-            print("未找到有效的 MIDI 数据！")
+            print("❗ 未找到任何有效的MIDI文件！")
 
     def __len__(self):
         return len(self.data)
@@ -234,17 +273,21 @@ class Discriminator(nn.Module):
         x = x.mean(dim=1)  # 池化
         validity = self.output_layer(x)  # (B, 1)
         return validity
-
+# -----------------------------
+# 设置设备 (device)
+# -----------------------------
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"当前使用设备：{device}")
 
 # -----------------------------
 # 训练函数
 # -----------------------------
-def train_musegan(midi_dir, epochs=100, batch_size=16, latent_dim=100, fs=100, fixed_length=500, max_tracks=4
-     #调用已有model
-                  ,
-    resume=True,
-    generator_path="path/to/generator.pth",
-    discriminator_path="path/to/discriminator.pth"):
+
+
+def train_musegan(midi_dir, epochs=100, batch_size=16, latent_dim=100, fs=100, fixed_length=500, max_tracks=4,
+                  resume=True,
+                  generator_path="path/to/generator.pth",
+                  discriminator_path="path/to/discriminator.pth"):
     dataset = MidiDatasetMulti(midi_dir, fs=fs, fixed_length=fixed_length, max_tracks=max_tracks)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
     if len(dataset) == 0:
@@ -259,8 +302,8 @@ def train_musegan(midi_dir, epochs=100, batch_size=16, latent_dim=100, fs=100, f
         n_tracks=sample_shape[0],
         n_pitches=sample_shape[1],
         seq_len=sample_shape[2]
-    )
-    discriminator = Discriminator(sample_shape)
+    ).to(device)
+    discriminator = Discriminator(sample_shape).to(device)
 
     # 如果启用续训（resume），则加载已有模型参数
     if resume:
@@ -281,12 +324,14 @@ def train_musegan(midi_dir, epochs=100, batch_size=16, latent_dim=100, fs=100, f
     optimizer_D = optim.Adam(discriminator.parameters(), lr=0.0002, betas=(0.5, 0.999))
 
     for epoch in range(epochs):
-        for i, real_data in enumerate(dataloader):
+        progress_bar = tqdm(dataloader, desc=f"Epoch [{epoch+1}/{epochs}]", ncols=120)
+
+        for i, real_data in enumerate(progress_bar):
+            real_data = real_data.to(device)
             current_bs = real_data.size(0)
 
-            # 使用 label smoothing
-            valid = torch.ones(current_bs, 1) * 0.9
-            fake = torch.zeros(current_bs, 1)
+            valid = torch.ones(current_bs, 1, device=device) * 0.9
+            fake = torch.zeros(current_bs, 1, device=device)
 
             # ---------------------
             #  训练判别器 Discriminator
@@ -295,8 +340,8 @@ def train_musegan(midi_dir, epochs=100, batch_size=16, latent_dim=100, fs=100, f
             validity_real = discriminator(real_data)
             d_loss_real = adversarial_loss(validity_real, valid)
 
-            z = torch.randn(current_bs, latent_dim)
-            gen_data = generator(z).detach() + 0.05 * torch.randn_like(generator(z))  # 生成器输出加噪声
+            z = torch.randn(current_bs, latent_dim, device=device)
+            gen_data = generator(z).detach() + 0.05 * torch.randn_like(generator(z))
             validity_fake = discriminator(gen_data)
             d_loss_fake = adversarial_loss(validity_fake, fake)
 
@@ -309,40 +354,30 @@ def train_musegan(midi_dir, epochs=100, batch_size=16, latent_dim=100, fs=100, f
             # ---------------------
             for _ in range(2):
                 optimizer_G.zero_grad()
-                z = torch.randn(current_bs, latent_dim)
+                z = torch.randn(current_bs, latent_dim, device=device)
                 gen_data = generator(z)
                 validity_fake = discriminator(gen_data)
 
-                # Add chord reward
-                # chord_score = 0.0
-                # for b in range(gen_data.size(0)):
-                #     roll = gen_data[b].detach().cpu().numpy()  # (4, 128, T)
-                #     merged_roll = np.sum(roll, axis=0)  # (128, T)
-                #     chord_score += reward_from_chords(merged_roll)
-                #
-                # chord_score /= gen_data.size(0)  # Average score across batch
-
-                # 🎵 Add track-aware chord reward
                 chord_score = 0.0
                 for b in range(gen_data.size(0)):
-                    roll = gen_data[b].detach().cpu().numpy()  # (4, 128, T)
+                    roll = gen_data[b].detach().cpu().numpy()
                     chord_score += reward_from_chords_multitrack(roll)
-
                 chord_score /= gen_data.size(0)
 
                 g_loss = adversarial_loss(validity_fake, valid)
-                g_loss -= 0.2 * chord_score  # Encourage chord formation
+                g_loss -= 0.2 * chord_score
                 g_loss.backward()
                 optimizer_G.step()
 
-            if i % 10 == 0:
-                print(
-                    f"[Epoch {epoch + 1}/{epochs}] [Batch {i}/{len(dataloader)}] D: {d_loss.item():.4f}  G: {g_loss.item():.4f}")
+            # ✅ 实时更新tqdm显示内容
+            progress_bar.set_postfix({
+                'D_loss': f"{d_loss.item():.4f}",
+                'G_loss': f"{g_loss.item():.4f}"
+            })
 
-        # <<< Add here
-        # if (epoch + 1) % 10 == 0:
+        # 保存生成的 MIDI
         with torch.no_grad():
-            z_sample = torch.randn(1, latent_dim)
+            z_sample = torch.randn(1, latent_dim, device=device)
             gen_sample = generator(z_sample).squeeze(0).cpu().numpy()
             binarized = (gen_sample > 0.3).astype(np.uint8)
             output_dir = os.path.join(os.path.dirname(__file__), "generated_midis")
@@ -351,11 +386,13 @@ def train_musegan(midi_dir, epochs=100, batch_size=16, latent_dim=100, fs=100, f
             save_pianoroll_as_midi(binarized, save_path)
             print(f"🎵 Saved generated MIDI at epoch {epoch + 1} -> {save_path}")
 
+    # 保存最终模型
     models_dir = os.path.join(midi_dir, "models")
     os.makedirs(models_dir, exist_ok=True)
     torch.save(generator.state_dict(), os.path.join(models_dir, "generator_version2_2.pth"))
     torch.save(discriminator.state_dict(), os.path.join(models_dir, "discriminator_version2_2.pth"))
     print("模型训练完成，已保存。")
+
 
 
 
