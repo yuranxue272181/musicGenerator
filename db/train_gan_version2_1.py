@@ -7,19 +7,31 @@ import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 import pretty_midi
 
-def reward_from_chords(piano_roll, fs=100):
+# def reward_from_chords(piano_roll, fs=100):
+#     """
+#     Evaluate if notes form chords in each time frame.
+#     Score is based on how often 3+ notes occur simultaneously.
+#     """
+#     score = 0.0
+#     time_steps = piano_roll.shape[-1]
+#
+#     for t in range(time_steps):
+#         active_notes = np.sum(piano_roll[:, t] > 0)
+#         if active_notes >= 3:
+#             score += 1.0
+#
+#     return score / time_steps
+
+def reward_from_chords_multitrack(roll, fs=100, min_tracks_with_notes=2, min_notes_per_frame=3):
     """
-    Evaluate if notes form chords in each time frame.
-    Score is based on how often 3+ notes occur simultaneously.
+    Reward chord-like frames that involve multiple tracks simultaneously.
     """
+    num_tracks, num_pitches, time_steps = roll.shape
     score = 0.0
-    time_steps = piano_roll.shape[-1]
-
     for t in range(time_steps):
-        active_notes = np.sum(piano_roll[:, t] > 0)
-        if active_notes >= 3:
+        notes_per_track = [(roll[trk, :, t] > 0.5).sum() for trk in range(num_tracks)]
+        if sum([n > 0 for n in notes_per_track]) >= min_tracks_with_notes and sum(notes_per_track) >= min_notes_per_frame:
             score += 1.0
-
     return score / time_steps
 
 def save_pianoroll_as_midi(piano_roll, filename, fs=100):
@@ -302,13 +314,21 @@ def train_musegan(midi_dir, epochs=100, batch_size=16, latent_dim=100, fs=100, f
                 validity_fake = discriminator(gen_data)
 
                 # Add chord reward
+                # chord_score = 0.0
+                # for b in range(gen_data.size(0)):
+                #     roll = gen_data[b].detach().cpu().numpy()  # (4, 128, T)
+                #     merged_roll = np.sum(roll, axis=0)  # (128, T)
+                #     chord_score += reward_from_chords(merged_roll)
+                #
+                # chord_score /= gen_data.size(0)  # Average score across batch
+
+                # 🎵 Add track-aware chord reward
                 chord_score = 0.0
                 for b in range(gen_data.size(0)):
                     roll = gen_data[b].detach().cpu().numpy()  # (4, 128, T)
-                    merged_roll = np.sum(roll, axis=0)  # (128, T)
-                    chord_score += reward_from_chords(merged_roll)
+                    chord_score += reward_from_chords_multitrack(roll)
 
-                chord_score /= gen_data.size(0)  # Average score across batch
+                chord_score /= gen_data.size(0)
 
                 g_loss = adversarial_loss(validity_fake, valid)
                 g_loss -= 0.2 * chord_score  # Encourage chord formation
