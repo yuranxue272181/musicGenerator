@@ -164,5 +164,5 @@ def generate_and_save_music(model_path, latent_dim=100, output_shape=(4, 128, 50
 
 if __name__ == "__main__":
     base_dir = os.path.dirname(__file__)
-    model_path = os.path.join(base_dir, "fixed_midi", "models", "generator_version2.pth")
+    model_path = os.path.join(base_dir, "fixed_midi", "models", "generator_epoch050.pth")
     generate_and_save_music(model_path)
