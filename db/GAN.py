@@ -162,7 +162,8 @@ class MidiDatasetMulti(Dataset):
         self._prepare_dataset()
 
     def _prepare_dataset(self):
-        for midi_file in self.midi_files:
+        print(f"📦 正在加载 {len(self.midi_files)} 个MIDI文件...")
+        for midi_file in tqdm(self.midi_files, desc="加载MIDI数据", ncols=100):
             if not is_midi_valid(midi_file):
                 continue
             multi_roll = midi_to_multi_piano_roll(midi_file, fs=self.fs, max_tracks=self.max_tracks,
@@ -171,6 +172,7 @@ class MidiDatasetMulti(Dataset):
                 self.data.append(multi_roll)
         if len(self.data) > 0:
             self.data = np.array(self.data)
+            print(f"✅ 成功加载了 {len(self.data)} 个有效的MIDI样本。")
         else:
             print("❗ 未找到任何有效的MIDI文件！")
 
@@ -403,14 +405,14 @@ def train_musegan(midi_dir, epochs=100, batch_size=16, latent_dim=100, fs=100, f
             z_sample = torch.randn(1, latent_dim, device=device)
             gen_sample = generator(z_sample).squeeze(0).cpu().numpy()
             binarized = (gen_sample > binarize_threshold).astype(np.uint8)
-            output_dir = os.path.join(midi_dir, "generated_midis")
+            output_dir = os.path.join(os.getcwd(), "generated_midis")
             os.makedirs(output_dir, exist_ok=True)
             save_path = os.path.join(output_dir, f"epoch{epoch+1:03d}.mid")
             save_pianoroll_as_midi(binarized, save_path)
 
         # 每5轮保存一次 checkpoint
         if (epoch + 1) % save_checkpoint_every == 0:
-            models_dir = os.path.join(midi_dir, "models")
+            models_dir = os.path.join(os.getcwd(), "models")
             os.makedirs(models_dir, exist_ok=True)
             torch.save(generator.state_dict(), os.path.join(models_dir, f"generator_epoch{epoch+1:03d}.pth"))
             torch.save(discriminator.state_dict(), os.path.join(models_dir, f"discriminator_epoch{epoch+1:03d}.pth"))
@@ -450,7 +452,7 @@ def train_musegan(midi_dir, epochs=100, batch_size=16, latent_dim=100, fs=100, f
 
 if __name__ == "__main__":
     base_dir = os.path.dirname(__file__)
-    midi_dir = os.path.join(base_dir, "fixed_midi")
+    midi_dir = os.path.join(base_dir, "POP909")
     train_musegan(
         midi_dir=midi_dir,
         epochs=50,
