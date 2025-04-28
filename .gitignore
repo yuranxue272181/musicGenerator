@@ -4,6 +4,7 @@
 # 忽略中间数据文件夹
 db/clean_midi/
 db/fixed_midi/
+db/POP909
 
 # 忽略 Python 缓存
 __pycache__/

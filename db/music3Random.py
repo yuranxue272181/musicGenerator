@@ -15,7 +15,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # 加载训练好的 Generator
 base_dir = os.path.dirname(__file__)
-model_path = os.path.join(base_dir, "fixed_midi", "models", "generator_epoch050.pth")
+model_path = os.path.join(base_dir,"models", "generator_epoch050.pth")
 generator = Generator(
     latent_dim=latent_dim,
     n_tracks=n_tracks,
@@ -30,20 +30,68 @@ print("✅ Generator 加载完成")
 # =========================
 # 音色配置（梦幻氛围）
 # =========================
+
+#1 梦幻
+# instrument_configs = [
+#     {"program": 8, "is_drum": False, "name": "Celesta"},
+#     {"program": 52, "is_drum": False, "name": "Choir Aahs"},
+#     {"program": 39, "is_drum": False, "name": "Synth Bass 2"},
+#     {"program": 118, "is_drum": True, "name": "Synth Drum"}
+# ]
+#
+# # 节奏设置
+# rhythm_settings = {
+#     0: {"interval": 16, "pitch_range": (72, 96)},   # 主旋律：每16步一次（更悠闲）
+#     1: {"interval": 32, "pitch_range": (60, 72)},   # 和声：每32步一次
+#     2: {"interval": 48, "pitch_range": (36, 52)},   # Bass：每48步一个低音
+#     3: {"pattern": [0, 64, 128, 192]}               # 鼓：每64步打一下，等于两小节一次
+# }
+
+#2 电子
+# instrument_configs = [
+#     {"program": 81, "is_drum": False, "name": "Lead 2 (Sawtooth)"},    # 锯齿Lead，非常典型的电子旋律音色
+#     {"program": 86, "is_drum": False, "name": "Pad 2 (Warm)"},         # 暖音Pad，背景铺垫
+#     {"program": 38, "is_drum": False, "name": "Synth Bass 1"},         # 合成器Bass，动感
+#     {"program": 118, "is_drum": True, "name": "Synth Drum"}            # 合成器鼓组
+# ]
+#
+# rhythm_settings = {
+#     0: {"interval": 12, "pitch_range": (72, 96)},    # 主旋律，轻快但不太密
+#     1: {"interval": 24, "pitch_range": (48, 72)},    # 背景Pad，慢速铺垫
+#     2: {"interval": 16, "pitch_range": (36, 52)},    # Bass，每小节两次
+#     3: {"pattern": [0, 16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240]}  # 鼓密集打点
+# }
+
+#3 rock
+# instrument_configs = [
+#     {"program": 29, "is_drum": False, "name": "Overdriven Guitar"},  # 过载吉他
+#     {"program": 30, "is_drum": False, "name": "Distortion Guitar"}, # 失真吉他
+#     {"program": 33, "is_drum": False, "name": "Fingered Bass"},      # 电贝斯
+#     {"program": 118, "is_drum": True, "name": "Synth Drum"}          # 合成鼓，模拟摇滚鼓
+# ]
+#
+# rhythm_settings = {
+#     0: {"interval": 8, "pitch_range": (64, 80)},    # 主旋律吉他，比较密集
+#     1: {"interval": 16, "pitch_range": (60, 76)},   # 副吉他
+#     2: {"interval": 24, "pitch_range": (40, 52)},   # Bass慢一点
+#     3: {"pattern": [0, 32, 64, 96, 128, 160, 192, 224]}  # 鼓点稳定，摇滚感
+# }
+
+#4 ambient
 instrument_configs = [
-    {"program": 8, "is_drum": False, "name": "Celesta"},
-    {"program": 52, "is_drum": False, "name": "Choir Aahs"},
-    {"program": 39, "is_drum": False, "name": "Synth Bass 2"},
-    {"program": 118, "is_drum": True, "name": "Synth Drum"}
+    {"program": 89, "is_drum": False, "name": "Pad 0 (New Age)"},    # 新世纪Pad
+    {"program": 91, "is_drum": False, "name": "Pad 2 (Warm)"},       # 暖Pad
+    {"program": 96, "is_drum": False, "name": "FX 1 (Rain)"},        # 特效Rain
+    {"program": 122, "is_drum": True, "name": "Percussive Organ"}    # 柔和打击
 ]
 
-# 节奏设置
 rhythm_settings = {
-    0: {"interval": 6, "pitch_range": (72, 96)},    # 主旋律：每6步1次（大约每0.06秒一次）
-    1: {"interval": 12, "pitch_range": (60, 72)},   # 和声：每12步1次
-    2: {"interval": 16, "pitch_range": (36, 52)},   # Bass：每16步一个低音根音
-    3: {"pattern": [0, 32, 64, 96, 128, 160, 192, 224]}  # 鼓点稀疏，4拍一次
+    0: {"interval": 48, "pitch_range": (65, 85)},    # 很慢
+    1: {"interval": 64, "pitch_range": (50, 70)},    # 更慢
+    2: {"interval": 96, "pitch_range": (40, 60)},    # 稀疏低音
+    3: {"pattern": [0, 128, 256]}                    # 极少的鼓点
 }
+
 
 
 # =========================
