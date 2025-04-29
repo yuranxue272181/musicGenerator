@@ -15,7 +15,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # 加载训练好的 Generator
 base_dir = os.path.dirname(__file__)
-model_path = os.path.join(base_dir,"models", "generator_epoch050.pth")
+model_path = os.path.join(base_dir, "fixed_midi_2", "models", "generator_epoch050.pth")
 generator = Generator(
     latent_dim=latent_dim,
     n_tracks=n_tracks,
@@ -59,6 +59,7 @@ print("✅ Generator 加载完成")
 #     1: {"interval": 24, "pitch_range": (60, 72)},
 #     2: {"interval": 32, "pitch_range": (36, 52)},
 #     3: {"pattern": [0, 64, 128, 192]}
+# }
 
 #
 # # 节奏设置
@@ -223,13 +224,13 @@ def save_multitrack_piano_roll_as_midi(piano_roll, filename, fs=100, configs=Non
 
         # Set base velocity range depending on track type
         if i == 0:  # Melody
-            velocity_range = (70, 100)
+            velocity_range = (85, 105)
         elif i == 1:  # Harmony
-            velocity_range = (50, 80)
+            velocity_range = (50, 80) # velocity_range = (80, 100)
         elif i == 2:  # Bass
-            velocity_range = (60, 85)
+            velocity_range = (80, 95)
         elif i == 3:  # Drums
-            velocity_range = (65, 95)
+            velocity_range = (65, 95)# velocity_range = (45, 65)
         else:
             velocity_range = (60, 90)
 
