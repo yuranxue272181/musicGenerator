@@ -152,22 +152,68 @@ def save_pianoroll_as_midi(piano_roll, filename, fs=100):
 # 数据集模块
 # ================================
 
+# ===================
+# 自定义数据集（参考你给的那一版）
+# ===================
 class MidiDatasetMulti(Dataset):
-    def __init__(self, midi_dir, fs=100, fixed_length=500, max_tracks=4):
-        self.midi_files = find_all_midi_files(midi_dir)
+    def __init__(self, midi_dir, fs=100, fixed_length=256, max_tracks=4):
+        self.midi_files = find_all_midi_files(midi_dir)  # 🔥 直接用外面的
         self.fs = fs
         self.fixed_length = fixed_length
         self.max_tracks = max_tracks
         self.data = []
         self._prepare_dataset()
 
+    def is_midi_valid(self, midi_file, max_tick_threshold=16000000, max_messages=500000):
+        try:
+            mid = mido.MidiFile(midi_file)
+            total_messages = sum(len(track) for track in mid.tracks)
+            if total_messages > max_messages:
+                print(f"⚠️ 消息数超限 ({total_messages})，跳过 {midi_file}")
+                return False
+            for track in mid.tracks:
+                for msg in track:
+                    if hasattr(msg, 'time') and msg.time > max_tick_threshold:
+                        print(f"⚠️ 单条tick时间异常 ({msg.time})，跳过 {midi_file}")
+                        return False
+            return True
+        except Exception as e:
+            print(f"⚠️ mido解析失败，跳过: {midi_file}，错误信息: {e}")
+            return False
+
+    def midi_to_multi_piano_roll(self, midi_file):
+        try:
+            midi_data = pretty_midi.PrettyMIDI(midi_file)
+            tracks = []
+            for instrument in midi_data.instruments:
+                roll = instrument.get_piano_roll(fs=self.fs) / 127.0
+                tracks.append(roll)
+                if len(tracks) >= self.max_tracks:
+                    break
+            if len(tracks) < self.max_tracks:
+                max_time = max((r.shape[1] for r in tracks), default=0)
+                for _ in range(self.max_tracks - len(tracks)):
+                    tracks.append(np.zeros((128, max_time)))
+            processed = []
+            for roll in tracks:
+                if roll.shape[1] < self.fixed_length:
+                    pad_width = self.fixed_length - roll.shape[1]
+                    roll = np.pad(roll, ((0, 0), (0, pad_width)), mode='constant')
+                else:
+                    roll = roll[:, :self.fixed_length]
+                processed.append(roll)
+            multi_roll = np.stack(processed, axis=0)
+            return multi_roll
+        except Exception as e:
+            print(f"Error processing {midi_file}: {e}")
+            return None
+
     def _prepare_dataset(self):
         print(f"📦 正在加载 {len(self.midi_files)} 个MIDI文件...")
         for midi_file in tqdm(self.midi_files, desc="加载MIDI数据", ncols=100):
-            if not is_midi_valid(midi_file):
+            if not self.is_midi_valid(midi_file):
                 continue
-            multi_roll = midi_to_multi_piano_roll(midi_file, fs=self.fs, max_tracks=self.max_tracks,
-                                                  fixed_length=self.fixed_length)
+            multi_roll = self.midi_to_multi_piano_roll(midi_file)
             if multi_roll is not None:
                 self.data.append(multi_roll)
         if len(self.data) > 0:
@@ -182,6 +228,7 @@ class MidiDatasetMulti(Dataset):
     def __getitem__(self, idx):
         sample = self.data[idx]
         return torch.tensor(sample, dtype=torch.float32)
+
 
 
 # ================================

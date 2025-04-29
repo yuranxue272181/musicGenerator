@@ -15,7 +15,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # 加载训练好的 Generator
 base_dir = os.path.dirname(__file__)
-model_path = os.path.join(base_dir, "fixed_midi_2", "models", "generator_epoch050.pth")
+# model_path = os.path.join(base_dir, "fixed_midi_2", "models", "generator_epoch050.pth")
+model_path = os.path.join(base_dir,"generated_from_pop909", "generator_epoch050.pth")
 generator = Generator(
     latent_dim=latent_dim,
     n_tracks=n_tracks,
